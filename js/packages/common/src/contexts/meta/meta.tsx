@@ -10,18 +10,18 @@ import {
 import { MetaContextState, MetaState } from './types';
 import { useConnection } from '../connection';
 import { useStore } from '../store';
-import { useQuerySearch } from '../../hooks';
+import { AuctionData, BidderMetadata, BidderPot } from '../../actions';
 
 const MetaContext = React.createContext<MetaContextState>({
   ...getEmptyMetaState(),
   isLoading: false,
+  // @ts-ignore
+  update: () => [AuctionData, BidderMetadata, BidderPot],
 });
 
 export function MetaProvider({ children = null as any }) {
   const connection = useConnection();
   const { isReady, storeAddress } = useStore();
-  const searchParams = useQuerySearch();
-  const all = searchParams.get('all') == 'true';
 
   const [state, setState] = useState<MetaState>(getEmptyMetaState());
 
@@ -30,17 +30,15 @@ export function MetaProvider({ children = null as any }) {
   const updateMints = useCallback(
     async metadataByMint => {
       try {
-        if (!all) {
-          const { metadata, mintToMetadata } = await queryExtendedMetadata(
-            connection,
-            metadataByMint,
-          );
-          setState(current => ({
-            ...current,
-            metadata,
-            metadataByMint: mintToMetadata,
-          }));
-        }
+        const { metadata, mintToMetadata } = await queryExtendedMetadata(
+          connection,
+          metadataByMint,
+        );
+        setState(current => ({
+          ...current,
+          metadata,
+          metadataByMint: mintToMetadata,
+        }));
       } catch (er) {
         console.error(er);
       }
@@ -48,32 +46,43 @@ export function MetaProvider({ children = null as any }) {
     [setState],
   );
 
-  useEffect(() => {
-    (async () => {
-      if (!storeAddress) {
-        if (isReady) {
-          setIsLoading(false);
-        }
-        return;
-      } else if (!state.store) {
-        setIsLoading(true);
+  async function update(auctionAddress?: any, bidderAddress?: any) {
+    if (!storeAddress) {
+      if (isReady) {
+        setIsLoading(false);
       }
+      return;
+    } else if (!state.store) {
+      setIsLoading(true);
+    }
 
-      console.log('-----> Query started');
+    console.log('-----> Query started');
 
-      const nextState = !USE_SPEED_RUN
-        ? await loadAccounts(connection, all)
-        : await limitedLoadAccounts(connection);
+    const nextState = !USE_SPEED_RUN
+      ? await loadAccounts(connection)
+      : await limitedLoadAccounts(connection);
 
-      console.log('------->Query finished');
+    console.log('------->Query finished');
 
-      setState(nextState);
+    setState(nextState);
 
-      setIsLoading(false);
-      console.log('------->set finished');
+    setIsLoading(false);
+    console.log('------->set finished');
 
-      updateMints(nextState.metadataByMint);
-    })();
+    await updateMints(nextState.metadataByMint);
+
+    if (auctionAddress && bidderAddress) {
+      const auctionBidderKey = auctionAddress + '-' + bidderAddress;
+      return [
+        nextState.auctions[auctionAddress],
+        nextState.bidderPotsByAuctionAndBidder[auctionBidderKey],
+        nextState.bidderMetadataByAuctionAndBidder[auctionBidderKey],
+      ];
+    }
+  }
+
+  useEffect(() => {
+    update();
   }, [connection, setState, updateMints, storeAddress, isReady]);
 
   useEffect(() => {
@@ -81,7 +90,7 @@ export function MetaProvider({ children = null as any }) {
       return;
     }
 
-    return subscribeAccountsChange(connection, all, () => state, setState);
+    return subscribeAccountsChange(connection, () => state, setState);
   }, [connection, setState, isLoading]);
 
   // TODO: fetch names dynamically
@@ -116,6 +125,8 @@ export function MetaProvider({ children = null as any }) {
     <MetaContext.Provider
       value={{
         ...state,
+        // @ts-ignore
+        update,
         isLoading,
       }}
     >
